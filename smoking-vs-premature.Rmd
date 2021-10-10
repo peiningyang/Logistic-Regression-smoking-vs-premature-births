@@ -2,7 +2,7 @@
 title: "IDS 702: Data Analysis Assignment 3"
 author: "Peining Yang"
 date: "9/15/2021"
-output: html_document
+output: pdf_document
 ---
 
 ```{r setup, include=FALSE}
