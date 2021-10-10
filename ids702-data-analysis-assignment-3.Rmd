@@ -1,0 +1,268 @@
+---
+title: "IDS 702: Data Analysis Assignment 3"
+author: "Peining Yang"
+date: "9/15/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, fig.pos = "H", warning = FALSE)
+library(readr)
+library(ggplot2)
+library(dplyr)
+library(tidyverse)
+library(kableExtra)
+library(stats)
+library(car)
+library(gridExtra)
+library(cowplot)
+library(leaps)
+library(reshape2)
+library(arm)
+library(e1071)
+library(caret)
+library(pROC)
+```
+
+```{r read-data}
+smoking <- read.csv("data/smoking.csv")
+babies <- read.csv("data/babiesdata.csv")
+
+babies_subset <- subset(babies, id %in% smoking$id)
+babies_subset <- babies_subset %>% dplyr::select(id, Premature)
+
+smoking <- merge(smoking, babies_subset, by = "id")
+
+smoking$mrace[smoking$mrace == 0] <- "White"
+smoking$mrace[smoking$mrace == 1] <- "White"
+smoking$mrace[smoking$mrace == 2] <- "White"
+smoking$mrace[smoking$mrace == 3] <- "White"
+smoking$mrace[smoking$mrace == 4] <- "White"
+smoking$mrace[smoking$mrace == 5] <- "White"
+smoking$mrace[smoking$mrace == 6] <- "Mexican"
+smoking$mrace[smoking$mrace == 7] <- "Black"
+smoking$mrace[smoking$mrace == 8] <- "Asian"
+smoking$mrace[smoking$mrace == 9] <- "Mix"
+
+smoking$smoke <- factor(smoking$smoke)
+smoking$mrace <- factor(smoking$mrace)
+smoking$med <- factor(smoking$med)
+smoking$inc <- factor(smoking$inc)
+
+smoking <- smoking %>% dplyr::select(-c("gestation", "bwt.oz"))
+
+smoking$Premature <- as.numeric(smoking$Premature)
+```
+
+# Summary
+
+In this assignment, we used logistic regression to model the odds that a baby is born premature by the mother's smoking behavior among other demographic information of the mother. The goal of this study is to identify the variables associated with whether or not a baby will be born premature. Results showed that the mother's smoking behavior, race, pre-pregnancy weight and education level are influential in the odds of a baby being premature. Although we've identified several factors, there are some concerns to statistical significance of the variables and the predictive abilities of the final model, therefore, further analysis could be needed. 
+
+# Introduction
+
+Previous research has shown that pregnant mothers who smoke cigarettes can lead to many health issues in their babies. In this assignment, we will examine whether a mother's smoking behavior is correlated with pre-term births, which are infants born with a gestational age of less than 270 days. If we do detect a relationship, we will look for the odds ratio of pre-term births for smokers and non-smokers. On top of that, we will also investigate whether the odds ratio is influenced by the mother's race. Lastly, we will also explore other variables associated with the mother and determine whether there are any significant associations to pre-term births. 
+
+# Exploratory Data Analysis
+
+After data wrangling, the final dataset we will use contains 869 observations and 11 variables. The response variable is _Premature_, which is an binary variable with "1" representing a baby that is premature and "0" for one that is not premature. The predictor variables are _parity_, which is total number of previous pregnancies, _mrace_, which is the mother's race, _mage_, which is the mother's age in years, _med_, which is the mother's level of education, _mht_, which is mother's height in inches, _mpregwt_, which is mother's pre-pregnancy weight in pounds, _inc_, which is the family's yearly income and _smoke_, which is whether the mother smokes or not. We centered the _mpregwt_, _mht_ and _mage_ variables for the sake of model interpretation. 
+
+From the table below, we can see that 18.99% of the data have observations with premature babies, which is arguably a low proportion of the data. There are slightly more premature births when the mother is a smoker. 
+```{r eda1, fig.align="center"}
+eda1 <- data.frame(Premature = c("Premature", "Premature", "Non-Premature", "Non-Premature"), smoke = c("Non-Smoker", "Smoker", "Non-Smoker", "Smoker"), count = c(77, 87, 389, 316))
+eda1$Premature <- factor(eda1$Premature)
+eda1$smoke <- factor(eda1$smoke) 
+
+# ggplot(eda1, aes(x = smoke, y = count, group = Premature, fill = Premature, label = count)) + 
+#   geom_bar(stat = "identity", position = "dodge") +
+#   geom_text(aes(label = count), position = position_dodge(width = 0.9), vjust = -0.25) +
+#   theme_bw() +
+#   labs(title = "Total Observations of Smoker and Non-Smoker Mothers vs. \n Premature and Non-Premature Babies",
+#        x = "Smoke",
+#        y = "Count")
+
+kable(eda1,
+      col.names = c("Premature", "Smoke", "Count"),
+      caption = "Exploratory Data Analysis of Premature Births and Mother's Smoking Behavior") %>% 
+  kable_styling(position = "center", latex_options = "hold_position", font_size = 10)
+```
+
+In addition, we also plotted several predictor variables against each other in order to detect patterns. It is important to note that from the boxplots below that both the mother's height and weight are slighly influenced by the mother's race. There are also many outliers in the plots, especially in the mother's weight for white women. We will take note of this as we proceed into the analysis. 
+```{r eda2, fig.width=7, fig.height=3, fig.align="center"}
+eda1 <- ggplot(smoking, aes(fill = mrace, x = mht)) +
+  geom_boxplot(alpha = 0.8) +
+  theme_bw() +
+  theme(plot.title = element_text(size=10),
+        axis.title.x = element_text(size=8)) +
+  scale_fill_brewer(palette="BuPu") +
+  labs(title = "Mother's Height by Race",
+       x = "Height (in)")
+
+eda2 <- ggplot(smoking, aes(fill = mrace, x = mpregwt)) +
+  geom_boxplot(alpha = 0.8) +
+  theme_bw() +
+  theme(plot.title = element_text(size=10),
+        axis.title.x = element_text(size=8)) +
+  scale_fill_brewer(palette="BuPu") +
+  theme(legend.position="none") +
+  labs(title = "Mother's Weight by Race",
+       x = "Weight (lb)")
+  
+
+# ggplot(smoking, aes(fill = med, x = mage)) +
+#   geom_boxplot()
+# 
+# ggplot(smoking, aes(fill = inc, x = mage)) +
+#   geom_boxplot()
+# 
+# ggplot(smoking, aes(fill = smoke, x = mpregwt)) +
+#   geom_boxplot()
+plot_grid(eda1, eda2, nrow = 1, rel_widths = c(0.6, 0.4))
+
+```
+# Model
+
+For our initial model, we included all predictor variables with an additional interaction term of _smoke:mrace_ since we are interested in whether the mother's race has an impact on smoking behavior and premature births. As seen from the EDA, we will also explore the interaction effects between _mpregwt:mrace_ and _mht:mrace_. 
+
+The initial model yielded a Residual Deviance of 774.59 with only _mrace = White_ as a statistically significant variable. The binned residual plots show that the residuals are mostly randomly scattered around zero with 3 points lying outside of the 95% confidence interval. The residuals are split equally positive and negative for lower predictive probabilities and there aren't many points in the higher predictive probabilities range. 
+```{r center-data}
+smoking$mpregwt_c <- smoking$mpregwt - mean(smoking$mpregwt)
+smoking$mht_c <- smoking$mht - mean(smoking$mht)
+smoking$mage_c <- smoking$mage - mean(smoking$mage)
+```
+
+```{r initial-glm, results = "hide"}
+model1 <- glm(Premature ~ parity + mrace + mage_c + med + mht_c + mpregwt_c + inc + smoke + smoke*mrace + mht_c*mrace + mpregwt_c*mrace, data = smoking, family = binomial)
+# + smoke:mrace + med:inc + mht:mpregwt
+sum_model1 <- summary(model1)
+sum_model1
+```
+
+```{r model-diagnostics, fig.show = "hide"}
+resids1 <- residuals(model1, "resp")
+
+binnedplot(fitted(model1), resids1, xlab="Pred. probabilities",
+           col.int="red4",ylab="Avg. residuals",main="Binned residual plot",col.pts="navy")
+
+binnedplot(smoking$mpregwt_c, resids1, xlab="Mother's Weight During Pregnancy",
+           col.int="red4",ylab="Avg. residuals",main="Binned residual plot",col.pts="navy")
+
+binnedplot(smoking$mage, resids1, xlab="Mother's Age",
+           col.int="red4",ylab="Avg. residuals",main="Binned residual plot",col.pts="navy")
+
+binnedplot(smoking$parity, resids1, xlab="Parity",
+           col.int="red4",ylab="Avg. residuals",main="Binned residual plot",col.pts="navy")
+
+binnedplot(smoking$mht_c, resids1, xlab="Mother's Height",
+           col.int="red4",ylab="Avg. residuals",main="Binned residual plot",col.pts="navy")
+
+```
+
+```{r forward-aic, results="hide"}
+null_model <- glm(Premature ~ smoke + mrace + smoke:mrace, data = smoking, family = binomial)
+full_model <- model1
+
+forward_aic <- step(null_model, scope = formula(full_model), direction = "forward", trace = 0) 
+summary(forward_aic)
+
+```
+
+```{r backward-aic, results="hide"}
+backward_aic <- step(full_model, direction = "backward", trace = 0)
+summary(backward_aic)
+```
+
+```{r stepwise-aic, results = "hide"}
+# this seems like the best
+stepwise_aic <- step(null_model, scope = formula(full_model), direction = "both", trace = 0)
+summary(stepwise_aic)
+```
+
+We then performed model selection with a backward, forward and stepwise algorithm using the Akaike's Information Criterion (AIC). Stepwise AIC produced the model with the smallest number of variables and no interaction terms, which includes _smoke_, _mrace_, _med_ and _mpregwt_c_. In addition to these variables, forward AIC also selected _mrace:smoke_ and backwards AIC also selected _mrace:smoke_ and _mrace:mht_c_. We first eliminated the backwards AIC model as it contains too many variables to be efficient. 
+
+The only difference between the stepwise and forwrad models are the interaction term between race of mother and their smoking behavior. However, all the interaction levels yielded a p-value of greater than 0.05, indicating that these levels are not statistically significant. To test whether we should include the interaction terms, we performed a chi-squared test that yielded a p-value of 0.387. This is above the 5% significance level, therefore, we will exclude the interaction terms and select the stepwise AIC model as our final model.
+
+```{r final-model, results = "hide"}
+fin_model <- glm(Premature ~ mrace + med + mpregwt_c + smoke, family = binomial, data = smoking)
+sum_fin <- summary(fin_model)
+```
+
+```{r chisq-test, results = "hide"}
+no_int <- glm(Premature ~ mrace + med + mpregwt_c + smoke, family = binomial, data = smoking)
+int <- glm(Premature ~ mrace + med + mpregwt_c + smoke + smoke*mrace, family = binomial, data = smoking)
+anova(no_int, int, test = "Chisq")
+```
+The figures below shows the binned residual plots for the predictive probabilities and the Receiver Operating Characteristic (ROC) curve of the final model. The residuals are randomly scattered around 0 and showed improvement compared to the initial model as there are now less points outside of the 95% confidence interval. This shows that the logistic regression assumptions are met. Since there is only one continuous variable of _mpregwt_c_ in the final model, we do not have to worry about issues of multicollinearity. 
+
+```{r final-model-binned-residuals, fig.align="center"}
+final_resid <- residuals(fin_model, "resp")
+
+par(mfrow=c(1,2))  
+binnedplot(fitted(fin_model), final_resid, xlab="Pred. probabilities",
+           col.int="red4",ylab="Avg. residuals",main="Binned residual plot",col.pts="navy", 
+           cex.main = 0.9, cex.lab = 0.7, cex.axis = 0.7)
+
+invisible(roc(smoking$Premature, fitted(fin_model), plot = T, print.thres = mean(smoking$Premature), legacy.axes = T, print.auc = T, col = "red3", main = "ROC: Logistic Regression", cex.main = 0.9, cex.lab = 0.7, cex.axis = 0.7))
+
+# binnedplot(smoking$mpregwt_c, final_resid, xlab="Mother's Weight During Pregnancy",
+#            col.int="red4",ylab="Avg. residuals",main="Binned residual plot",col.pts="navy")
+
+```
+
+```{r confusion-matrix, fig.show = "hide", results = "hide"}
+conf_mat <- confusionMatrix(as.factor(ifelse(fitted(fin_model) >= mean(smoking$Premature), "1","0")),
+                            as.factor(smoking$Premature),positive = "1")
+cm_table <- conf_mat$table
+conf_mat$overall["Accuracy"]
+conf_mat$byClass[c("Sensitivity","Specificity")]
+
+# kable(conf_mat$table,
+#       caption = "Confusion Matrix for Final Model") %>% 
+#   kable_styling(position = "center", latex_options = "hold_position", font_size = 10) %>% 
+#   footnote(general = paste("Accuracy: ", round(conf_mat$overall["Accuracy"], digits = 3), ", Sensitivity: ", round(conf_mat$byClass["Sensitivity"], digits = 3), ", Specificity: ", round(conf_mat$byClass["Specificity"], digits = 3), sep = ""))
+
+```
+Using the mean of _Premature_ for the dataset as the threshold, we generated a confusion matrix. The final model achieved an accuracy of 0.609, sensitivity of 0.579 and specificity of 0.617. This means that the model predicted 60.9% of the data correctly. Given that a baby is premature, the model has a 57.9% probability of predicting it as premature. Given that a baby is not premature, the model has a 61.7% probability of predicting it as not premature. As we can see from the second figure, the model achieved an Area Under the Curve (AUC) score of 0.657. 
+
+# Results
+The final model is given by the following equation:
+$$Premature_i | x_i \sim Bernoulli(\pi_i) log(\frac{\pi_i}{1 - \pi_i}) = x_i\beta$$
+where $Premature_i$ is the binary response variable indicating whether the baby is premature or not and $x_i$ includes all predictor variables of _smoke_, _mrace_, _med_ and _mpregwt (centered)_ as the main effect. 
+
+The model coefficients are shown in the table below. 
+```{r model-output-table, fig.align="center"}
+final_df <- round(sum_fin$coefficients, digits = 3)
+final_CI <- confint(fin_model)
+
+f_CI <- NULL
+for (i in 1:nrow(final_CI)) {
+    f_CI[i] = paste("(", round(final_CI[i,1], digits = 2), ", ", round(final_CI[i,2], digits = 2), ")", sep = "")
+}
+
+output <- cbind(final_df, f_CI)
+
+dev <- round(sum_fin$deviance, digits = 2)
+kable(output, 
+      col.names = c("Odds Ratio", "Std. Error", "t-value", "p-value", "95% CI"),
+      caption = "Smoking vs. Premature Logistic Regression Model Output") %>% 
+  kable_styling(position = "center", latex_options = "HOLD_position", font_size = 10) %>% 
+  footnote(general = paste("Residual Deviance: ", dev, sep = ""))
+```
+# Discussion
+
+Although the model selection process included the variables in the above table, only the variables of the mother's pre-pregnancy weight and when the mother is white are statistically significant. Keeping all else constant, when the mother is a smoker, we increase the odds for the baby being born premature by a multiplicative effect of 1.34. This means that the odds for mothers who smoke is 33.5% higher than for mother's who do not smoke. This also answers our main research question as mothers who do smoke tend to have a higher chance of pre-term birth than mothers who do not smoke. However, we would like to note that in our final model, _smoke_ is not a statistically significant variable as the p-value is above the 0.05 threshold. Looking at the confidence interval, we are 95% confident that keeping all else constant, the range of the odds that a baby is premature will increase by a multiplicative effect of between 0.93 to 1.92. Since the interaction terms between _smoke_ and _mrace_ were selectd out and deemed statistically insignificant through the chi-squared test, we can conclude that the odds ratio of pre-term birth for smokers and non-smokers do not differ by the mother's race. 
+
+There are also other statistically significant variables in the final model. Keeping all else constant, with every unit increase in the mother's pre-pregnancy weight, we increase the odds of for a baby being born premature by a multiplicative effect of 0.988. If the mother also smokes, with every unit increase in weight, we increase the odds by a multiplicative effect of 1.319. Within the race variable, the only statistically significant level is when the mother is white. When the mother is white and is a smoker, the odds that their baby is premature increases by a multiplicative effect of 0.540. 
+
+## Limitations
+
+We acknowledge that there are still limitations to the analysis that requires further investigation. Since many of the predictor variables are of categorical nature, this inhibited us from exploring its interaction effects because certain interactions just don't have enough observations in the dataset. For example, there is no data for a Mexican mother whose income is above $15,000. There is also no data for Asian mothers whose education level is less than 8th grade or trade school. In addition, our final model only yielded an accuracy of 60.9% and many of the variables are statistically insignificant. I believe this issue could only be solved by having a larger dataset or potentially including the father's information on the analysis. 
+
+
+# Conclusion
+Looking at the big picture, the purpose of this study is to identify the significant factors of the mother that causes premature births in order to ultimately seek solutions to eliminate this problem. So far, we have examined smoking and its effect on birth weight (previous assignment) and premature births. However, there are many other potentially more severe and long-term damages to the baby by smoking during pregnancies. Therefore, results of our analysis will hopefully raise awareness on this issue. It will also help identify other influential factors such as race, income, education levels, etc., and can help devise effective intervention programs that will be best suited for different communities. 
+
+
+
+
+
+
