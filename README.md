@@ -1,1 +1,3 @@
-# Logistic-Regression-smoking-vs-premature-births
+# Logistic Regression: Mother's Smoking Behavior vs. Premature Births
+
+In this project, I used logistic regression to model the odds that a baby is born premature by the mother’s smoking behavior among other demographic information of the mother. The goal of this study is to identify the variables associated with whether or not a baby will be born premature. Results showed that the mother’s smoking behavior, race, pre-pregnancy weight and education level are influential in the odds of a baby being premature. Although I've identified several factors, there are some concerns to statistical significance of the variables and the predictive abilities of the final model, therefore, further analysis could be needed.
